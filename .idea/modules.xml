@@ -2,8 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/../DatasetPrep/.idea/DatasetPrep.iml" filepath="$PROJECT_DIR$/../DatasetPrep/.idea/DatasetPrep.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/PfirrmannGrading.iml" filepath="$PROJECT_DIR$/.idea/PfirrmannGrading.iml" />
-      <module fileurl="file://$PROJECT_DIR$/../segmentationRun/.idea/segmentationRun.iml" filepath="$PROJECT_DIR$/../segmentationRun/.idea/segmentationRun.iml" />
     </modules>
   </component>
 </project>

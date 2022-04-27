@@ -1,3 +1,0 @@
- _target_: segmentation_models_pytorch.losses.JaccardLoss
- mode: 'multiclass'
- log_loss: True

@@ -1,20 +1,19 @@
 defaults:
   - _self_
-  - data: segmentations
-  - architecture: Unet
-  - model: training
-  - loss_function: dice
+  - mode: classification
+  - training: classification_regime
+  - segmentation_architecture: UnetPlusPlus
+  - classification_architecture: efficientnet-b0
   - override hydra/hydra_logging: colorlog
   - override hydra/job_logging: colorlog
 
-random_seed:
-  seed: 23
+random_seed: 23
 
 device: cuda
 
-hydra:
-  output_subdir: null
-  run:
-    dir: logs
+#hydra:
+#  output_subdir: null
+#  run:
+#    dir: .
 
 

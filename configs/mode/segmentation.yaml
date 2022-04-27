@@ -1,0 +1,47 @@
+# Run Segmentation in
+# classify-labels: Takes MRI slices, combines with pfirrmann grades and genearates dataset for classification
+# view: segment random image and show
+# spine-map: overlays segmentation on spine
+segmentation:
+  run_mode: train
+
+input:
+  dir: /data/NFBC/NFBC_Segmentation_All
+  images: images
+  masks: masks
+  annotations: annotations.xml
+  metadata: metadata.csv
+  n_classes: 14
+
+# Test folder where MRI images for segmentation are stored
+test:
+  dir: /data/TUK/TUK_Segmentation_Test
+
+# for creating spine units from MRIs and categorize them to pfirrmann grades
+mri_scans:
+  dir: /data/NFBC/NFBC_MRI_Classify
+  labels: /data/NFBC/NFBC_PfirrmannGrades.csv
+  target_root: /data/NFBC
+
+#crop for segmentation
+crop:
+  width: 512
+  height: 512
+
+spine_segments:
+  t12: 13
+  d12: 12
+  l1: 11
+  d1: 10
+  l2: 9
+  d2: 8
+  l3: 7
+  d3: 6
+  l4: 5
+  d4: 4
+  l5: 3
+  d5: 2
+  s1: 1
+  crop_to_height: 200
+  crop_to_width: 200
+

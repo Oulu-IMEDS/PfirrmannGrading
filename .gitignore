@@ -1,0 +1,17 @@
+# Exclude files
+*.ipynb
+*.log
+*.pth
+*.png
+
+# exclude everything
+outputs/*
+notebooks/*
+results/*
+.idea/*
+__pycache__/*
+
+# exceptions
+!outputs/.gitkeep
+!notebooks/.gitkeep
+!results/.gitkeep
