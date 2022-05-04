@@ -3,6 +3,7 @@ classification:
   run_mode: train
   dir: /data/NFBC/NFBC_Spine_Unit_Classification
   metadata: patient_meta_data.csv
+  pfirrmann_column: pfirrmann_grade
   num_classes: 4
   num_slices: 6
   img_width: 128

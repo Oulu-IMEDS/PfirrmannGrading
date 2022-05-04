@@ -10,6 +10,7 @@ notebooks/*
 results/*
 .idea/*
 __pycache__/*
+multirun/*
 
 # exceptions
 !outputs/.gitkeep

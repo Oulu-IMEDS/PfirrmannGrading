@@ -2,6 +2,8 @@
 # classify-labels: Takes MRI slices, combines with pfirrmann grades and genearates dataset for classification
 # view: segment random image and show
 # spine-map: overlays segmentation on spine
+# train: Initiate Segmentation Training
+
 segmentation:
   run_mode: train
 
@@ -42,6 +44,6 @@ spine_segments:
   l5: 3
   d5: 2
   s1: 1
-  crop_to_height: 200
-  crop_to_width: 200
+  crop_to_height: 128
+  crop_to_width: 128
 

@@ -1,5 +1,5 @@
-learning_rate: 1e-3
-epochs: 85
+learning_rate: 1e-2
+epochs: 100
 
 optimizer:
   weight_decay: 1e-4
@@ -7,15 +7,15 @@ optimizer:
 scheduler:
   factor: 0.1
   patience: 5
-  step: 15
+  step: 20
   gamma: 0.1
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
   num_workers: 1
 
 checkpoint:
-  epochs_to_pass: 5
+  epochs_to_pass: 10
 
 train_test:
   test_perc: 0.2

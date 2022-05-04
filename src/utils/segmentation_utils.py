@@ -8,8 +8,73 @@ import random
 import torch
 from albumentations.pytorch import ToTensorV2
 from pathlib import Path, PurePath
+from sklearn.model_selection import GroupShuffleSplit
+from src.model.model_architectures import build_model
 from torch.nn.parallel import DataParallel
+from torch.utils.data import DataLoader
+from torchvision.transforms import transforms
 from tqdm import tqdm
+
+from src.data.segmentation_loader import SegmentationLoader
+
+
+def score_avg_segmentation(cfg, test_df, logger):
+    test_ds = SegmentationLoader(cfg, test_df, 'test')
+    test_loader = DataLoader(dataset=test_ds, batch_size=cfg.training.dataloader.batch_size,
+                             num_workers=cfg.training.dataloader.num_workers)
+
+    checkpoints = list(Path(PurePath.joinpath(Path.cwd(), "results", "models")).glob("SpineSeg_*"))
+
+    models = []
+    iou_cum = []
+    for checkpoint in checkpoints:
+        segmentation_model, criterion, optimizer, scheduler = build_model(cfg, logger)
+        state = torch.load(checkpoint)['model_state']
+        segmentation_model.load_state_dict(state)
+        segmentation_model = DataParallel(segmentation_model)
+        segmentation_model = segmentation_model.to('cuda')
+        models.append(segmentation_model)
+
+    with tqdm(models, unit="batch") as tepoch:
+        with torch.no_grad():
+            tepoch.set_description(f"\t Computing IOU: ")
+            for model in tepoch:
+                segmentation_model = model
+                segmentation_model.eval()
+
+                for i_batch, batch in enumerate(test_loader):
+                    images = batch['transformed_raw'].to(cfg.device)
+                    masks = batch['transformed_mask'].to(cfg.device)
+
+                    outputs = segmentation_model(images)
+                    preds = outputs.argmax(axis=1)
+                    preds = preds.cpu().detach().float().numpy()
+                    masks = masks.cpu().detach().float().numpy()
+
+                    # Calculate the confusion matrix and IOC for the epoch
+                    for batch_el_id in range(preds.shape[0]):
+                        confusion_matrix = calculate_confusion_matrix_from_arrays(preds[batch_el_id, :, :],
+                                                                                  masks[batch_el_id, :, :],
+                                                                                  cfg.mode.input.n_classes)
+                        iou_res = calculate_iou(confusion_matrix)
+                        iou_cum.append(np.array(iou_res))
+                    tepoch.set_postfix(mean_iou=np.mean(iou_cum))
+
+    return np.mean(iou_cum)
+
+
+def split_test_train(cfg, df):
+    # Split the main df into train,test splits
+    split_mode = GroupShuffleSplit(test_size=cfg.training.train_test.test_perc, n_splits=1,
+                                   random_state=cfg.random_seed)
+    data_split = split_mode.split(df, groups=df['patient_id'])
+    train_indices, test_indices = next(data_split)
+
+    segmentation_df = df.iloc[train_indices]
+    segmentation_df = segmentation_df.reset_index()
+    test_df = df.iloc[test_indices]
+    test_df = test_df.reset_index()
+    return segmentation_df, test_df
 
 
 def calculate_confusion_matrix_from_arrays(prediction, ground_truth, nr_labels):
@@ -50,16 +115,33 @@ def calculate_iou(confusion_matrix):
     return ious
 
 
-def visualize_random_img_masks(image_batch, logger):
-    index = np.random.randint(0, len(image_batch))
-    # logger.info(image_batch.__getitem__(0))
-    image_1 = image_batch.__getitem__(index)['transformed_raw'][0]
-    mask_1 = image_batch.__getitem__(index)['transformed_mask'][0]
-    plt.subplot(1, 2, 1)
-    plt.imshow(image_1, cmap='gray')
-    plt.subplot(1, 2, 2)
-    plt.imshow(mask_1)
-    plt.show()
+def visualize_random_img_masks(image_batch, writer, logger):
+    plt.figure(figsize=(20, 20))
+    idx, imgs = next(enumerate(image_batch))
+    plot_ind = 1
+    for index in range(8):
+        image_1 = imgs['transformed_raw'][index].unsqueeze(0)
+        mask = imgs['transformed_mask'][index].unsqueeze(0)
+
+        # Inverse Normalize the image before displaying
+        inv_normalize = transforms.Normalize(
+            mean=[-m / s for m, s in zip([0.181], [0.184])],
+            std=[1 / s for s in [0.184]]
+        )
+
+        inv_tensor = inv_normalize(image_1)
+
+        plt.subplot(4, 4, plot_ind)
+        plt.imshow(inv_tensor.squeeze(0).permute(1, 2, 0))
+        plot_ind += 1
+        plt.subplot(4, 4, plot_ind)
+        plt.imshow(mask.permute(1, 2, 0))
+        plot_ind += 1
+    plt.title(f"Random Images from Train Set")
+    plt.savefig('train_images.png', dpi='figure')
+    img_raw = cv2.imread(str('train_images.png'))
+    images_train = torch.tensor(cv2.cvtColor(img_raw, cv2.IMREAD_COLOR))
+    writer.add_image(f"Random Images from Train Set", images_train, dataformats='HWC')
     plt.close()
 
 
@@ -72,7 +154,7 @@ def img_to_tensor(cfg, img_raw, tensor=False):
     return transformed_img
 
 
-def get_spine_unit_rect(cfg, input_image, model_prediction, spine_unit, logger, display=False):
+def get_spine_unit_rect(cfg, input_image, model_prediction, spine_unit, logger, pad=None, display=False):
     if spine_unit == 'l1-l2':
         s_unit = (np.uint8(model_prediction == cfg.mode.spine_segments.l1) + np.uint8(
             model_prediction == cfg.mode.spine_segments.d1) + np.uint8(
@@ -130,16 +212,36 @@ def get_spine_unit_rect(cfg, input_image, model_prediction, spine_unit, logger, 
             x, y, width, height = cv2.boundingRect(big_contour)
             result = input_image[y:y + height, x:x + width]
 
-            if display:
-                plt.imshow(result)
-                plt.show()
-                plt.close()
-            else:
-                return result
+            dw = cfg.mode.spine_segments.crop_to_width - result.shape[0]
+            dh = cfg.mode.spine_segments.crop_to_height - result.shape[1]
+
+            if pad:
+                # Apply a white border around the segmented area
+                top = max(0, dw // 2)
+                bottom = max(0, dw - top)
+                left = max(0, dh // 2)
+                right = max(0, dh - left)
+                result = cv2.copyMakeBorder(result, top, bottom, left, right,
+                                            cv2.BORDER_CONSTANT, value=(255, 255, 255))
+
+            # If resultant crop has dimensions more than intended crop dimensions, apply resize
+            if (result.shape[0], result.shape[1]) != (
+                    cfg.mode.spine_segments.crop_to_width, cfg.mode.spine_segments.crop_to_height):
+                result = cv2.resize(result,
+                                    (cfg.mode.spine_segments.crop_to_width, cfg.mode.spine_segments.crop_to_height),
+                                    interpolation=cv2.INTER_AREA)
+        if display:
+            plt.imshow(result)
+            plt.show()
+            plt.close()
+        else:
+            return result
 
 
 def model_prediction(cfg, input):
-    checkpoints = list(Path(PurePath.joinpath(Path.cwd(), "results", "models")).glob("SpineSeg*"))
+    parent = "/home/nash/PycharmProjects/PfirrmannGrading/results/models"
+    # checkpoints = list(Path(PurePath.joinpath(Path.cwd(), "results", "models")).glob("SpineSeg*"))
+    checkpoints = list(Path(parent).glob("SpineSeg*"))
     img_raw = cv2.imread(input)
     img_torch = img_to_tensor(cfg, img_raw, tensor=True)
     img_raw = img_to_tensor(cfg, img_raw)
@@ -204,7 +306,7 @@ def visualize_segmentation(cfg, input, logger):
     plt.yticks([])
     plt.show()
 
-    get_spine_unit_rect(cfg, original_image, prediction, 'l3-l4', logger, display=True)
+    get_spine_unit_rect(cfg, original_image, prediction, 'l3-l4', logger, pad=None, display=True)
 
     plt.close()
 
@@ -250,9 +352,13 @@ def categorize_spine_units(cfg, mri_labels, mri_file, logger, spine_units):
         # if we are unable to find spine unit for
         if np.any(result):
             pfirrmann_grade = mri_labels[disc_mapping[unit]].values[0]
+            pfirrmann_grade_vv = mri_labels[disc_mapping[unit].replace("lsMRI", "lsMRI_VV")].values[0]
+            pfirrmann_grade_max = max(pfirrmann_grade, pfirrmann_grade_vv)
+
             dir_name = mri_labels['PatientID'].values[0].replace("+", "_") + "_" + unit + "_" + "PG" + str(
-                pfirrmann_grade)
-            file_name = mri_file.name.replace(".png", "_" + unit + "_PG" + str(pfirrmann_grade) + ".png")
+                pfirrmann_grade) + "_" + str(pfirrmann_grade_vv)
+            file_name = mri_file.name.replace(".png", "_" + unit + "_PG" + str(pfirrmann_grade) + "_" + str(
+                pfirrmann_grade_vv) + ".png")
             # logger.info(f"Spine Unit:{unit} Pfirrmann Grade:{pfirrmann_grade} Dir Name:{dir_name} File Name:{file_name}")
             disc_path = Path(cfg.mode.mri_scans.target_root, "NFBC_Spine_Unit_Classification", dir_name)
             disc_path.mkdir(parents=True, exist_ok=True)
@@ -264,7 +370,9 @@ def categorize_spine_units(cfg, mri_labels, mri_file, logger, spine_units):
                                    dir_name, file_name)
             # Categorize the image into corresponding pfirrmann grade folder
             cv2.imwrite(str(target_file), result)
-            patient_meta_data.append([mri_labels['PatientID'].values[0], dir_name, file_name, pfirrmann_grade])
+            patient_meta_data.append(
+                [mri_labels['PatientID'].values[0], dir_name, file_name, pfirrmann_grade, pfirrmann_grade_vv,
+                 pfirrmann_grade_max])
     return patient_meta_data
 
 
@@ -274,23 +382,20 @@ def generate_mri_labels(cfg, logger):
     # Make directories with pfirrmann grade names to move spine units
     parent_path = Path(target_root, "NFBC_Spine_Unit_Classification")
     parent_path.mkdir(parents=True, exist_ok=True)
-    # # Make directories for the Pfirrmann grades
-    # for i in range(1, 6):
-    #     grades = Path(parent_path, str(i))
-    #     grades.mkdir(parents=True, exist_ok=True)
+
     # Read the pfirrmann grade labels for patients
     mri_labels = pd.read_csv(cfg.mode.mri_scans.labels)
     patient_ids = mri_labels.PatientID.values
 
-    patient_id_subset = random.choices(patient_ids, k=10)
-    pdf = pd.DataFrame(data=patient_id_subset, columns=['patient_id'])
-    pdf.to_csv(str(parent_path) + "/patient_id_subset.csv")
+    # patient_id_subset = random.choices(patient_ids, k=1)
+    # pdf = pd.DataFrame(data=patient_id_subset, columns=['patient_id'])
+    # pdf.to_csv(str(parent_path) + "/patient_id_subset.csv")
 
     # Path where the MRI images for the corresponding labels are present
     mri_path = cfg.mode.mri_scans.dir
     total_count = 0
     meta_data = pd.DataFrame()
-    with tqdm(patient_id_subset, unit="batch") as patient_ids:
+    with tqdm(patient_ids, unit="batch") as patient_ids:
         for patient_id in patient_ids:
             patient_ids.set_description(f"Processing Patient ID: {patient_id}")
             wildcard = "IMG" + patient_id.replace("+", "_") + "*"
@@ -302,7 +407,8 @@ def generate_mri_labels(cfg, logger):
                 patient_data = categorize_spine_units(cfg, mri_labels[mri_labels['PatientID'] == patient_id], mri,
                                                       logger, spine_units)
                 patient_meta = pd.DataFrame(data=patient_data,
-                                            columns=['patient_id', 'dir_name', 'file_name', 'pfirrmann_grade'])
+                                            columns=['patient_id', 'dir_name', 'file_name', 'pfirrmann_grade',
+                                                     'pfirrmann_grade_vv', 'pfirrmann_grade_max'])
                 meta_data = pd.concat([patient_meta, meta_data])
                 patient_ids.set_postfix(mri_count=mri_count, total_count=total_count)
-        meta_data.to_csv(str(parent_path) + "/patient_meta_data.csv", index=None)
+        meta_data.to_csv(str(parent_path) + "/patient_meta_data.csv", index=False)

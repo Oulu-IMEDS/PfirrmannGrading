@@ -2,7 +2,7 @@ defaults:
   - loss_function: jaccard
 
 learning_rate: 1e-4
-epochs: 5
+epochs: 50
 
 optimizer:
   weight_decay: 0.0001
@@ -17,5 +17,8 @@ dataloader:
   batch_size: 8
   num_workers: 1
 
+train_test:
+  test_perc: 0.2
+
 checkpoint:
-  epochs_to_pass: 5
+  epochs_to_pass: 10

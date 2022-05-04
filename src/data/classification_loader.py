@@ -27,14 +27,14 @@ class ClassificationLoader(Dataset):
     def __len__(self):
         return self.dataset_size
 
-    def get_weigted_slices(self, slice_volume):
+    def get_weighted_slices(self, slice_volume):
         weight_vector = []
         midpoint = slice_volume // 2
 
         # if we are processing only one slice, return the mid-sagittal slice
         if self.cfg.mode.classification.num_slices == 1:
-            weight_vector=np.zeros(slice_volume)
-            weight_vector[midpoint]=1
+            weight_vector = np.zeros(slice_volume)
+            weight_vector[midpoint] = 1
             return weight_vector
 
         # Create weights which are monotonically increasing till midpoint and decrease further
@@ -49,7 +49,7 @@ class ClassificationLoader(Dataset):
         # Get the filename of the image
         # get n images from the folder based on the configuration. If we do not have enough, repeat the image
         data_dir = self.data_slice.iloc[index]['dir_name']
-        image_list = list(Path(self.cfg.mode.classification.dir, data_dir).glob("*.png"))
+        image_list = sorted(list(Path(self.cfg.mode.classification.dir, data_dir).glob("*.png")))
 
         # The dataloader should give same amount of images.
         # So if there are no sufficient images, we use existing images
@@ -58,11 +58,12 @@ class ClassificationLoader(Dataset):
         if len(image_list) < self.cfg.mode.classification.num_slices:
             deficit = self.cfg.mode.classification.num_slices - len(image_list)
             # Append the last image with the deficit through random selection
-            weight_vector = self.get_weigted_slices(len(image_list))
-            image_list += random.choices(image_list, weights=weight_vector, k=deficit)
-        elif len(image_list) > self.cfg.mode.classification.num_slices:
-            weight_vector = self.get_weigted_slices(len(image_list))
-            image_list = random.choices(image_list, weights=weight_vector, k=self.cfg.mode.classification.num_slices)
+            weight_vector = self.get_weighted_slices(len(image_list))
+            image_list += sorted(random.choices(image_list, weights=weight_vector, k=deficit))
+        elif len(image_list) >= self.cfg.mode.classification.num_slices:
+            weight_vector = self.get_weighted_slices(len(image_list))
+            image_list = sorted(
+                random.choices(image_list, weights=weight_vector, k=self.cfg.mode.classification.num_slices))
 
         transformed_images = []
         labels = []
@@ -90,11 +91,9 @@ class ClassificationLoader(Dataset):
             train_transform = A.Compose(
                 [A.OneOf([A.RandomGamma(),
                           A.RandomBrightnessContrast(brightness_limit=(0, 0.2), contrast_limit=(0, 0.1)),
-                          A.CLAHE(clip_limit=0.2),
-                          A.Affine(rotate=(-10, 10)),
                           ], p=0.5
                          ),
-                 A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                 # A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
                  A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
                  ToTensorV2()])
             transformed = train_transform(image=img_raw)
@@ -104,10 +103,10 @@ class ClassificationLoader(Dataset):
         elif self.aug_type == 'val':
             val_transform = A.Compose(
                 [A.OneOf([A.RandomGamma(),
-                          A.RandomBrightnessContrast(brightness_limit=(0, 0.2), contrast_limit=(0, 0.1))
+                          A.RandomBrightnessContrast(brightness_limit=(0, 0.2), contrast_limit=(0, 0.1)),
                           ], p=0.5
                          ),
-                 A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                 # A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
                  A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
                  ToTensorV2()])
             transformed = val_transform(image=img_raw)
@@ -116,9 +115,9 @@ class ClassificationLoader(Dataset):
             return transformed_img
         else:
             test_transform = A.Compose(
-                [A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
-                 A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
-                 ToTensorV2()])
+                [  # A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                    A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                    ToTensorV2()])
             transformed = test_transform(image=img_raw)
             transformed_img = transformed['image']
             # Tensors are to be converted to float tensors as cv2 is giving byte tensor

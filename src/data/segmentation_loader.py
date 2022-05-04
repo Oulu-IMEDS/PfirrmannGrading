@@ -38,18 +38,14 @@ class SegmentationLoader(Dataset):
     # When you normalize the class labels of masks change.
     def apply_img_transforms(self, img_raw, img_mask):
         if self.aug_type == 'train':
-            train_transform = A.Compose([A.OneOf([A.OpticalDistortion(distort_limit=2, shift_limit=0.5)
-                                                     , A.ElasticTransform(alpha=120, sigma=120 * 0.05,
-                                                                          alpha_affine=120 * 0.03)
-                                                     , A.Affine(rotate=(-10, 10), shear=(-10, 10))
-                                                     , A.GridDistortion()
-                                                     , A.CLAHE(clip_limit=2)
-                                                     , A.RandomGamma()
-                                                     , A.RandomBrightnessContrast()
-                                                  ], p=1
-                                                 )
-                                            , A.Resize(self.cfg.mode.crop.width, self.cfg.mode.crop.height)
-                                            , ToTensorV2()])
+            train_transform = A.Compose(
+                [A.OneOf([A.RandomGamma(),
+                          A.RandomBrightnessContrast(brightness_limit=(0, 0.2), contrast_limit=(0, 0.1)),
+                          ], p=0.5
+                         ),
+                 A.Resize(self.cfg.mode.crop.width, self.cfg.mode.crop.height),
+                 A.Normalize(mean=0.181, std=0.184, always_apply=True, p=1.0),
+                 ToTensorV2()])
             transformed = train_transform(image=img_raw, mask=img_mask)
             transformed_img = transformed['image']
             # Albumentations returns masks of the form HxWxC. We permute to make channels first
@@ -59,7 +55,12 @@ class SegmentationLoader(Dataset):
             return transformed_img, transformed_mask
         elif self.aug_type == 'val':
             val_transform = A.Compose(
-                [A.RandomBrightnessContrast(p=0.3), A.Resize(self.cfg.mode.crop.width, self.cfg.mode.crop.height),
+                [A.OneOf([A.RandomGamma(),
+                          A.RandomBrightnessContrast(brightness_limit=(0, 0.2), contrast_limit=(0, 0.1)),
+                          ], p=0.5
+                         ),
+                 A.Resize(self.cfg.mode.crop.width, self.cfg.mode.crop.height),
+                 A.Normalize(mean=0.181, std=0.184, always_apply=True, p=1.0),
                  ToTensorV2()])
             transformed = val_transform(image=img_raw, mask=img_mask)
             transformed_img = transformed['image']
@@ -69,7 +70,8 @@ class SegmentationLoader(Dataset):
             return transformed_img, transformed_mask
         else:
             test_transform = A.Compose(
-                [A.RandomBrightnessContrast(p=0.3), A.Resize(self.cfg.mode.crop.width, self.cfg.mode.crop.height),
+                [A.Normalize(mean=0.181, std=0.184, always_apply=True, p=1.0),
+                 A.Resize(self.cfg.mode.crop.width, self.cfg.mode.crop.height),
                  ToTensorV2()])
             transformed = test_transform(image=img_raw, mask=img_mask)
             transformed_img = transformed['image']

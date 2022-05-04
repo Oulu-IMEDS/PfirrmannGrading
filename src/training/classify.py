@@ -16,7 +16,7 @@ from src.model.model_architectures import build_model
 from src.utils.classification_utils import visualize_random_imgs
 
 
-def execute_training(cfg, fold, epoch, train_loader, val_loader, classification_model, criterion, optimizer, scheduler,
+def execute_training(cfg, epoch, train_loader, val_loader, classification_model, criterion, optimizer, scheduler,
                      logger, y_true_epoch, y_pred_epoch, writer):
     train_loss = 0
     num_tr_batches = 0
@@ -41,7 +41,7 @@ def execute_training(cfg, fold, epoch, train_loader, val_loader, classification_
                 loss.backward()
                 optimizer.step()
                 # Scheduler should step per batch for Cyclic LR
-                # scheduler.step()
+                scheduler.step()
 
             train_loss += loss.item()
             _, index = torch.max(outputs, 1)
@@ -74,28 +74,43 @@ def execute_training(cfg, fold, epoch, train_loader, val_loader, classification_
                 y_true_epoch.append(labels.detach().cpu().numpy().squeeze())
                 y_pred_epoch.append(index.detach().cpu().numpy().squeeze())
 
-                bal_acc = round(
-                    balanced_accuracy_score(np.concatenate(y_true_epoch), np.concatenate(y_pred_epoch)) * 100, 3)
+                bal_acc = balanced_accuracy_score(np.concatenate(y_true_epoch), np.concatenate(y_pred_epoch)) * 100
 
                 vepoch.set_postfix(val_loss=val_loss.item() / num_val_batches, val_acc=val_acc, bal_acc=bal_acc)
     writer.add_scalars('Loss',
                        {'train_loss': train_loss / num_tr_batches, 'val_loss': val_loss / num_val_batches}, epoch)
     writer.add_scalars('Accuracy', {'train_acc': train_acc, 'val_acc': val_acc, 'bal_acc': bal_acc}, epoch)
-    bal_acc = round(balanced_accuracy_score(np.concatenate(y_true_epoch), np.concatenate(y_pred_epoch)) * 100, 3)
+    bal_acc = balanced_accuracy_score(np.concatenate(y_true_epoch), np.concatenate(y_pred_epoch)) * 100
 
     return val_acc, bal_acc
 
 
-def save_model_checkpoint(cfg, fold, classification_model, epoch, epoch_acc):
+def save_model_checkpoint(cfg, classification_model, epoch, epoch_acc):
     model_checkpoint = {"epoch": epoch, "model_state": classification_model.module.state_dict(), "val_acc": epoch_acc}
-    fname = "SpineCls_{}_Epoch{}_Val_Acc{}.pth".format(fold, epoch, np.round(epoch_acc, 4))
+    fname = f"SpineCls_Epoch{epoch}_Bal_Acc{epoch_acc:.4f}.pth"
     checkpoint_file = PurePath.joinpath(Path.cwd(), "results", "models", fname)
     prev_model = list(
-        Path(PurePath.joinpath(Path.cwd(), "results", "models")).glob("SpineCls_{}*".format(fold)))
+        Path(PurePath.joinpath(Path.cwd(), "results", "models")).glob("SpineCls_*"))
     if len(prev_model) >= 1:
         Path.unlink(prev_model[0], missing_ok=False)
     torch.save(model_checkpoint, checkpoint_file)
     return checkpoint_file
+
+
+def get_weighted_sampler(cfg, df):
+    # Create a weighted train sampler
+    class_idx = {'2': 0, '3': 1, '4': 2, '5': 3}
+    y_train_indices = df.pfirrmann_grade.index
+    y_train = [class_idx[str(df.pfirrmann_grade[i])] for i in y_train_indices]
+
+    class_sample_count = np.unique(y_train, return_counts=True)[1]
+    weight = 1. / class_sample_count
+    samples_weight = weight[y_train]
+    samples_weight = torch.from_numpy(samples_weight)
+    samples_weight = samples_weight.double()
+    sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
+
+    return sampler
 
 
 def start_classification(cfg, classification_df, logger):
@@ -109,10 +124,7 @@ def start_classification(cfg, classification_df, logger):
     if cfg.device == 'cuda':
         classification_model = DataParallel(classification_model)
 
-    # Perform K-fold training
-    # k_fold_df = GroupKFold(n_splits=1).split(classification_df, groups=classification_df.patient_id)
-    # for fold, (train_index, val_index) in enumerate(k_fold_df):
-    split_mode = GroupShuffleSplit(test_size=0.1, n_splits=1, random_state=cfg.random_seed)
+    split_mode = GroupShuffleSplit(test_size=0.2, n_splits=1, random_state=cfg.random_seed)
     data_split = split_mode.split(classification_df, groups=classification_df['patient_id'])
     train_index, val_index = next(data_split)
 
@@ -125,31 +137,20 @@ def start_classification(cfg, classification_df, logger):
     class_weights = torch.tensor(class_weights, dtype=torch.float).to(cfg.device)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    fold = 1
-    print("Starting Fold:{} with Train DF Shape:{} Val DF Shape:{}".format(fold, train_df.shape, val_df.shape))
+    print(f"Starting Training with Train Set:{train_df.shape} Validation Set:{val_df.shape}")
 
     # Create Classification dataset with Augmentations
     train_ds = ClassificationLoader(cfg, train_df, 'train')
     val_ds = ClassificationLoader(cfg, val_df, 'val')
-    # val_sampler = SequentialSampler(val_ds)
 
-    # Create a weighted train sampler
-    class_idx = {'2': 0, '3': 1, '4': 2, '5': 3}
-    y_train_indices = train_df.pfirrmann_grade.index
-    y_train = [class_idx[str(train_df.pfirrmann_grade[i])] for i in y_train_indices]
-
-    class_sample_count = np.unique(y_train, return_counts=True)[1]
-    weight = 1. / class_sample_count
-    samples_weight = weight[y_train]
-    samples_weight = torch.from_numpy(samples_weight)
-    samples_weight = samples_weight.double()
-    train_sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
+    train_sampler = get_weighted_sampler(cfg, train_df)
+    val_sampler = get_weighted_sampler(cfg, val_df)
 
     # Create the train and val loaders
     train_loader = DataLoader(dataset=train_ds, batch_size=cfg.training.dataloader.batch_size,
                               num_workers=cfg.training.dataloader.num_workers, sampler=train_sampler)
     val_loader = DataLoader(dataset=val_ds, batch_size=cfg.training.dataloader.batch_size,
-                            num_workers=cfg.training.dataloader.num_workers)
+                            num_workers=cfg.training.dataloader.num_workers, sampler=val_sampler)
 
     # Visualize random image and mask
     visualize_random_imgs(train_loader, writer, logger)
@@ -158,18 +159,18 @@ def start_classification(cfg, classification_df, logger):
     y_true_epoch = []
     y_pred_epoch = []
     for epoch in range(cfg.training.epochs):
-        epoch_acc, epoch_bal_acc = execute_training(cfg, fold, epoch, train_loader, val_loader, classification_model,
+        epoch_acc, epoch_bal_acc = execute_training(cfg, epoch, train_loader, val_loader, classification_model,
                                                     criterion,
                                                     optimizer, scheduler, logger, y_true_epoch, y_pred_epoch, writer)
 
         # Scheduler Step
-        scheduler.step()
+        # scheduler.step()
 
-        # Start saving checkpoints only after 5 epochs for the first fold
-        if (fold == 0 and epoch > cfg.training.checkpoint.epochs_to_pass and prev_acc < epoch_bal_acc) or (
-                prev_acc < epoch_bal_acc and fold != 0):
-            prev_acc = epoch_bal_acc
-            checkpoint_file = save_model_checkpoint(cfg, fold, classification_model, epoch, epoch_bal_acc)
+        # Start saving checkpoints after configured epochs passed
+        measure = epoch_bal_acc
+        if epoch > cfg.training.checkpoint.epochs_to_pass and prev_acc < measure:
+            prev_acc = measure
+            checkpoint_file = save_model_checkpoint(cfg, classification_model, epoch, measure)
             # checkpoint_message = "Checkpoint {} saved".format(checkpoint_file)
             # logger.info(checkpoint_message)
 
