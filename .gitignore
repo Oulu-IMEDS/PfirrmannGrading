@@ -3,6 +3,7 @@
 *.log
 *.pth
 *.png
+*.old
 
 # exclude everything
 outputs/*
