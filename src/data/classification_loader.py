@@ -22,7 +22,7 @@ class ClassificationLoader(Dataset):
         # Apply transformations based on train or val set
         self.aug_type = aug_type
         # Class names
-        self.class_id = {'2': 0, '3': 1, '4': 2, '5': 3}
+        self.class_id = {2: 0, 3: 1, 4: 2, 5: 3}
 
     def __len__(self):
         return self.dataset_size
@@ -49,18 +49,31 @@ class ClassificationLoader(Dataset):
         # Get the filename of the image
         # get n images from the folder based on the configuration. If we do not have enough, repeat the image
         data_dir = self.data_slice.iloc[index]['dir_name']
+        # We have only Pfirrmann Grades 2,3,4,5 in the dataset. Map these classes to ids starting from 0 index
+        pfirrmann_grade = self.class_id[self.data_slice.iloc[index]['pfirrmann_grade']]
         image_list = sorted(list(Path(self.cfg.mode.classification.dir, data_dir).glob("*.png")))
+        midpoint = len(image_list) // 2
+        r = self.cfg.mode.classification.num_slices // 2
 
         # The dataloader should give same amount of images.
         # So if there are no sufficient images, we use existing images
         # Give more weightage to the central slices of the MRI
 
-        if len(image_list) < self.cfg.mode.classification.num_slices:
-            deficit = self.cfg.mode.classification.num_slices - len(image_list)
-            # Append the last image with the deficit through random selection
-            weight_vector = self.get_weighted_slices(len(image_list))
-            image_list += sorted(random.choices(image_list, weights=weight_vector, k=deficit))
+        # if len(image_list) < self.cfg.mode.classification.num_slices:
+        #     deficit = self.cfg.mode.classification.num_slices - len(image_list)
+        #     # Append the last image with the deficit through random selection
+        #     weight_vector = self.get_weighted_slices(len(image_list))
+        #     image_list += sorted(random.choices(image_list, weights=weight_vector, k=deficit))
+        # elif len(image_list) >= self.cfg.mode.classification.num_slices:
+        #     weight_vector = self.get_weighted_slices(len(image_list))
+        #     image_list = sorted(
+        #         random.choices(image_list, weights=weight_vector, k=self.cfg.mode.classification.num_slices))
+
+        if self.cfg.mode.classification.num_slices == 1:
+            image_list = image_list[midpoint]
         elif len(image_list) >= self.cfg.mode.classification.num_slices:
+            image_list = image_list[midpoint - r:midpoint + r]
+        elif len(image_list) < self.cfg.mode.classification.num_slices:
             weight_vector = self.get_weighted_slices(len(image_list))
             image_list = sorted(
                 random.choices(image_list, weights=weight_vector, k=self.cfg.mode.classification.num_slices))
@@ -68,8 +81,6 @@ class ClassificationLoader(Dataset):
         transformed_images = []
         labels = []
         for image_path in image_list:
-            # We have only Pfirrmann Grades 2,3,4,5 in the dataset. Map these classes to ids starting from 0 index
-            pfirrmann_grade = self.class_id[image_path.name[-5:][0]]
             img_raw = cv2.imread(str(image_path))
             # Converting the image to single channel grayscale
             img_raw = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
@@ -83,17 +94,21 @@ class ClassificationLoader(Dataset):
         transformed_images = torch.Tensor(np.stack(transformed_images))
         labels = torch.Tensor(labels).long().squeeze()
 
-        return {"images": transformed_images, "labels": labels}
+        return {"images": transformed_images, "labels": labels, "dir_name": data_dir}
 
     # Apply Image Transformations using Albumentations
     def apply_img_transforms(self, img_raw):
         if self.aug_type == 'train':
             train_transform = A.Compose(
                 [A.OneOf([A.RandomGamma(),
-                          A.RandomBrightnessContrast(brightness_limit=(0, 0.2), contrast_limit=(0, 0.1)),
-                          ], p=0.5
+                          A.RandomBrightnessContrast(brightness_limit=(-0.3, 0.3), contrast_limit=(-0.2, 0.2)),
+                          A.GridDistortion(num_steps=5, distort_limit=0.3, interpolation=1, border_mode=4,
+                                           value=None, mask_value=None),
+                          A.Downscale(scale_min=0.5, scale_max=0.5, interpolation=0),
+                          ], p=0.6
                          ),
-                 # A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                 A.OneOf([A.Affine(rotate=25), A.Affine(rotate=-20), ], p=0.7),
+                 A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
                  A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
                  ToTensorV2()])
             transformed = train_transform(image=img_raw)
@@ -103,10 +118,11 @@ class ClassificationLoader(Dataset):
         elif self.aug_type == 'val':
             val_transform = A.Compose(
                 [A.OneOf([A.RandomGamma(),
-                          A.RandomBrightnessContrast(brightness_limit=(0, 0.2), contrast_limit=(0, 0.1)),
+                          A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.1, 0.1)),
+                          A.Affine(rotate=(-30, 30))
                           ], p=0.5
                          ),
-                 # A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                 A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
                  A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
                  ToTensorV2()])
             transformed = val_transform(image=img_raw)
@@ -115,9 +131,9 @@ class ClassificationLoader(Dataset):
             return transformed_img
         else:
             test_transform = A.Compose(
-                [  # A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
-                    A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
-                    ToTensorV2()])
+                [A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                 A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                 ToTensorV2()])
             transformed = test_transform(image=img_raw)
             transformed_img = transformed['image']
             # Tensors are to be converted to float tensors as cv2 is giving byte tensor

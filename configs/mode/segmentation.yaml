@@ -5,7 +5,7 @@
 # train: Initiate Segmentation Training
 
 segmentation:
-  run_mode: train
+  run_mode: classify-labels
 
 input:
   dir: /data/NFBC/NFBC_Segmentation_All
@@ -22,7 +22,7 @@ test:
 # for creating spine units from MRIs and categorize them to pfirrmann grades
 mri_scans:
   dir: /data/NFBC/NFBC_MRI_Classify
-  labels: /data/NFBC/NFBC_PfirrmannGrades.csv
+  labels: /data/NFBC/NFBC_PGC_SEX_VITD_HBA1C_BMI_LBP.csv
   target_root: /data/NFBC
 
 #crop for segmentation

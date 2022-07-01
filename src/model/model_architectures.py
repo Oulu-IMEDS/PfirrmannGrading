@@ -1,7 +1,9 @@
 import hydra
 import torch.nn as nn
-from torch.optim import Adam, SGD
+from torch.optim import Adam, AdamW, SGD
 from torch.optim.lr_scheduler import MultiStepLR, StepLR, CyclicLR
+from src.training.focal_loss import FocalLoss
+from src.model.metamodel import MultiModalENet
 
 
 def build_model(cfg, logger):
@@ -24,7 +26,7 @@ def build_model(cfg, logger):
                                 gamma=0.1)
     elif pipeline == 'classification':
         if cfg.classification_architecture['_target_'] == 'torchvision.models.resnet18':
-            # logger.info("Using Resnet34 architecture")
+            # logger.info("Using Resnet18 architecture")
             model = hydra.utils.instantiate(cfg.classification_architecture)
 
             # Changing the input layer to accept 4 channels
@@ -36,7 +38,7 @@ def build_model(cfg, logger):
                                      nn.Linear(256, 128),
                                      nn.Linear(128, cfg.mode.classification.num_classes))
         elif cfg.classification_architecture['_target_'] == 'torchvision.models.resnet34':
-            # logger.info("Using Efficientnet-B0 architecture")
+            # logger.info("Using Resnet34 architecture")
             model = hydra.utils.instantiate(cfg.classification_architecture)
 
             # Changing the input layer to accept 4 channels
@@ -46,7 +48,8 @@ def build_model(cfg, logger):
             model.fc = nn.Sequential(nn.Linear(512, 256),
                                      nn.Dropout(p=0.1),
                                      nn.Linear(256, 128),
-                                     nn.Linear(128, cfg.mode.classification.num_classes))
+                                     nn.Linear(128, cfg.mode.classification.num_classes)
+                                     )
         elif cfg.classification_architecture['_target_'] == 'torchvision.models.efficientnet_b0':
             # logger.info("Using Efficientnet-B0 architecture")
             model = hydra.utils.instantiate(cfg.classification_architecture)
@@ -56,7 +59,7 @@ def build_model(cfg, logger):
                                              padding=(1, 1), bias=False)
 
             model.classifier = nn.Sequential(nn.Linear(1280, 512),
-                                             nn.Dropout(p=0.1),
+                                             nn.Dropout(p=0.2),
                                              nn.Linear(512, 256),
                                              nn.Linear(256, cfg.mode.classification.num_classes))
         elif cfg.classification_architecture['_target_'] == 'timm.models.vit_base_patch16_224':
@@ -64,11 +67,30 @@ def build_model(cfg, logger):
             model = hydra.utils.instantiate(cfg.classification_architecture)
             model.head = nn.Linear(model.head.in_features, cfg.mode.classification.num_classes)
 
-        # optimizer = Adam(model.parameters(), lr=cfg.training.learning_rate,
-        #                  weight_decay=cfg.training.optimizer.weight_decay)
-        # scheduler = StepLR(optimizer, step_size=cfg.training.scheduler.step, gamma=cfg.training.scheduler.gamma)
-        optimizer = SGD(model.parameters(), lr=cfg.training.learning_rate, momentum=0.9)
-        scheduler = CyclicLR(optimizer, base_lr=1e-4, max_lr=cfg.training.learning_rate)
+        if cfg.training.scheduler.type == 'step':
+            logger.info('Using StepLR scheduler')
+            optimizer = AdamW(model.parameters(), lr=cfg.training.learning_rate,
+                              weight_decay=cfg.training.optimizer.weight_decay)
+            scheduler = StepLR(optimizer, step_size=cfg.training.scheduler.step, gamma=cfg.training.scheduler.gamma)
+        elif cfg.training.scheduler.type == 'cyclic':
+            logger.info('Using CyclicLR scheduler')
+            optimizer = SGD(model.parameters(), lr=cfg.training.learning_rate, momentum=0.9)
+            scheduler = CyclicLR(optimizer, base_lr=1e-5, max_lr=cfg.training.learning_rate)
+
         criterion = nn.CrossEntropyLoss()
+    elif pipeline == 'multimodal':
+        model = MultiModalENet(cfg)
+
+        if cfg.training.scheduler.type == 'step':
+            logger.info('Using StepLR scheduler')
+            optimizer = AdamW(model.parameters(), lr=cfg.training.learning_rate,
+                              weight_decay=cfg.training.optimizer.weight_decay)
+            scheduler = StepLR(optimizer, step_size=cfg.training.scheduler.step, gamma=cfg.training.scheduler.gamma)
+        elif cfg.training.scheduler.type == 'cyclic':
+            logger.info('Using CyclicLR scheduler')
+            optimizer = SGD(model.parameters(), lr=cfg.training.learning_rate, momentum=0.9)
+            scheduler = CyclicLR(optimizer, base_lr=1e-5, max_lr=cfg.training.learning_rate)
+
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.3)
 
     return model, criterion, optimizer, scheduler

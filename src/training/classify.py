@@ -14,6 +14,7 @@ from tqdm import tqdm
 from src.data.classification_loader import ClassificationLoader
 from src.model.model_architectures import build_model
 from src.utils.classification_utils import visualize_random_imgs
+from src.training.focal_loss import FocalLoss
 
 
 def execute_training(cfg, epoch, train_loader, val_loader, classification_model, criterion, optimizer, scheduler,
@@ -41,7 +42,8 @@ def execute_training(cfg, epoch, train_loader, val_loader, classification_model,
                 loss.backward()
                 optimizer.step()
                 # Scheduler should step per batch for Cyclic LR
-                scheduler.step()
+                if cfg.training.scheduler.type == 'cyclic':
+                    scheduler.step()
 
             train_loss += loss.item()
             _, index = torch.max(outputs, 1)
@@ -113,6 +115,23 @@ def get_weighted_sampler(cfg, df):
     return sampler
 
 
+def get_loss_function(cfg, logger, class_weights):
+    if cfg.training.loss_function == 'CE':
+        logger.info('Using Cross Entropy Loss')
+        criterion = nn.CrossEntropyLoss(label_smoothing=cfg.training.label_smoothing)
+    elif cfg.training.loss_function == 'WCE':
+        logger.info('Using Weighted Cross Entropy Loss')
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=cfg.training.label_smoothing)
+    elif cfg.training.loss_function == 'FL':
+        logger.info('Using Focal Loss')
+        criterion = FocalLoss(label_smoothing=cfg.training.label_smoothing)
+    elif cfg.training.loss_function == 'FLWCE':
+        logger.info('Using Focal Loss with Weighted Cross Entropy')
+        criterion = FocalLoss(weight=class_weights, label_smoothing=cfg.training.label_smoothing)
+
+    return criterion
+
+
 def start_classification(cfg, classification_df, logger):
     # Build the model
     classification_model, criterion, optimizer, scheduler = build_model(cfg, logger)
@@ -135,9 +154,8 @@ def start_classification(cfg, classification_df, logger):
     class_weights = compute_class_weight(class_weight='balanced', classes=train_df.pfirrmann_grade.unique(),
                                          y=train_df.pfirrmann_grade)
     class_weights = torch.tensor(class_weights, dtype=torch.float).to(cfg.device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    print(f"Starting Training with Train Set:{train_df.shape} Validation Set:{val_df.shape}")
+    criterion = get_loss_function(cfg, logger, class_weights)
 
     # Create Classification dataset with Augmentations
     train_ds = ClassificationLoader(cfg, train_df, 'train')
@@ -147,10 +165,18 @@ def start_classification(cfg, classification_df, logger):
     val_sampler = get_weighted_sampler(cfg, val_df)
 
     # Create the train and val loaders
-    train_loader = DataLoader(dataset=train_ds, batch_size=cfg.training.dataloader.batch_size,
-                              num_workers=cfg.training.dataloader.num_workers, sampler=train_sampler)
-    val_loader = DataLoader(dataset=val_ds, batch_size=cfg.training.dataloader.batch_size,
-                            num_workers=cfg.training.dataloader.num_workers, sampler=val_sampler)
+    if cfg.training.sampler == 'weighted':
+        logger.info(f"Using Weighted Sampler")
+        train_loader = DataLoader(dataset=train_ds, batch_size=cfg.training.dataloader.batch_size,
+                                  num_workers=cfg.training.dataloader.num_workers, sampler=train_sampler)
+        val_loader = DataLoader(dataset=val_ds, batch_size=cfg.training.dataloader.batch_size,
+                                num_workers=cfg.training.dataloader.num_workers, sampler=val_sampler)
+    else:
+        logger.info(f"Using Default Sampler")
+        train_loader = DataLoader(dataset=train_ds, batch_size=cfg.training.dataloader.batch_size,
+                                  num_workers=cfg.training.dataloader.num_workers)
+        val_loader = DataLoader(dataset=val_ds, batch_size=cfg.training.dataloader.batch_size,
+                                num_workers=cfg.training.dataloader.num_workers)
 
     # Visualize random image and mask
     visualize_random_imgs(train_loader, writer, logger)
@@ -158,17 +184,19 @@ def start_classification(cfg, classification_df, logger):
     prev_acc = 0
     y_true_epoch = []
     y_pred_epoch = []
+    print(f"Starting Training with Train Set:{train_df.shape} Validation Set:{val_df.shape}")
     for epoch in range(cfg.training.epochs):
         epoch_acc, epoch_bal_acc = execute_training(cfg, epoch, train_loader, val_loader, classification_model,
                                                     criterion,
                                                     optimizer, scheduler, logger, y_true_epoch, y_pred_epoch, writer)
 
         # Scheduler Step
-        # scheduler.step()
+        if cfg.training.scheduler.type == 'step':
+            scheduler.step()
 
         # Start saving checkpoints after configured epochs passed
         measure = epoch_bal_acc
-        if epoch > cfg.training.checkpoint.epochs_to_pass and prev_acc < measure:
+        if epoch >= cfg.training.checkpoint.epochs_to_pass and prev_acc < measure:
             prev_acc = measure
             checkpoint_file = save_model_checkpoint(cfg, classification_model, epoch, measure)
             # checkpoint_message = "Checkpoint {} saved".format(checkpoint_file)

@@ -103,7 +103,9 @@ def start_training(cfg, segmentation_df, logger):
     train_df = segmentation_df.loc[train_index]
     val_df = segmentation_df.loc[val_index]
 
-    print(f"Starting Training with Train DF Shape:{train_df.shape} Val DF Shape:{val_df.shape}")
+    logger.info(f"Starting Training with Train DF Shape:{train_df.shape} Val DF Shape:{val_df.shape}")
+
+    return
 
     # Create segmentation dataset with Augmentations
     train_ds = SegmentationLoader(cfg, train_df, 'train')

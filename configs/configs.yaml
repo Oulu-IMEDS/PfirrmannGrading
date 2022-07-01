@@ -1,16 +1,21 @@
 defaults:
   - _self_
-  - mode: segmentation
-  - training: segmentation_regime
+  - mode: classification
+  - training: classification_regime
   - segmentation_architecture: UnetPlusPlus
   - classification_architecture: efficientnet-b0
+  #- override hydra/launcher: joblib
   - override hydra/hydra_logging: colorlog
   - override hydra/job_logging: colorlog
 
-random_seed: 23
+random_seed: 84
 
 device: cuda
 
+#hydra:
+#  launcher:
+#    # override the number of jobs for joblib
+#    n_jobs: 2
 #hydra:
 #  output_subdir: null
 #  run:

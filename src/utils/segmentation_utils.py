@@ -338,9 +338,9 @@ def generate_spine_map(cfg, logger):
 
 
 def categorize_spine_units(cfg, mri_labels, mri_file, logger, spine_units):
-    disc_mapping = {'l1-l2': 'C6646C_lsMRI_Pfirrmann_L1_L2', 'l2-l3': 'C6646C_lsMRI_Pfirrmann_L2_L3',
-                    'l3-l4': 'C6646C_lsMRI_Pfirrmann_L3_L4', 'l4-l5': 'C6646C_lsMRI_Pfirrmann_L4_L5',
-                    'l5-s1': 'C6646C_lsMRI_Pfirrmann_L5_S1'}
+    disc_mapping = {'l1-l2': 'l1_l2', 'l2-l3': 'l2_l3',
+                    'l3-l4': 'l3_l4', 'l4-l5': 'l4_l5',
+                    'l5-s1': 'l5_s1'}
     # Get model prediction for the inputs file
     image_raw, prediction = model_prediction(cfg, str(mri_file))
     patient_meta_data = []
@@ -352,17 +352,14 @@ def categorize_spine_units(cfg, mri_labels, mri_file, logger, spine_units):
         # if we are unable to find spine unit for
         if np.any(result):
             pfirrmann_grade = mri_labels[disc_mapping[unit]].values[0]
-            pfirrmann_grade_vv = mri_labels[disc_mapping[unit].replace("lsMRI", "lsMRI_VV")].values[0]
-            pfirrmann_grade_max = max(pfirrmann_grade, pfirrmann_grade_vv)
 
-            dir_name = mri_labels['PatientID'].values[0].replace("+", "_") + "_" + unit + "_" + "PG" + str(
-                pfirrmann_grade) + "_" + str(pfirrmann_grade_vv)
-            file_name = mri_file.name.replace(".png", "_" + unit + "_PG" + str(pfirrmann_grade) + "_" + str(
-                pfirrmann_grade_vv) + ".png")
+            dir_name = mri_labels['patient_id'].values[0].replace("+", "_") + "_" + unit + "_" + "PG" + str(
+                pfirrmann_grade)
+            file_name = mri_file.name.replace(".png", "_" + unit + "_PG" + str(pfirrmann_grade) + "_" + ".png")
             # logger.info(f"Spine Unit:{unit} Pfirrmann Grade:{pfirrmann_grade} Dir Name:{dir_name} File Name:{file_name}")
             disc_path = Path(cfg.mode.mri_scans.target_root, "NFBC_Spine_Unit_Classification", dir_name)
             disc_path.mkdir(parents=True, exist_ok=True)
-            # if mri_labels['PatientID'].values[0]=='010166+0013' and unit=='l1-l2':
+            # if mri_labels['patient_id'].values[0]=='010166+0013' and unit=='l1-l2':
             #    plt.imshow(result)
             #    plt.show()
 
@@ -371,8 +368,10 @@ def categorize_spine_units(cfg, mri_labels, mri_file, logger, spine_units):
             # Categorize the image into corresponding pfirrmann grade folder
             cv2.imwrite(str(target_file), result)
             patient_meta_data.append(
-                [mri_labels['PatientID'].values[0], dir_name, file_name, pfirrmann_grade, pfirrmann_grade_vv,
-                 pfirrmann_grade_max])
+                [mri_labels['patient_id'].values[0], dir_name, file_name, unit, pfirrmann_grade,
+                 mri_labels['sex'].values[0],
+                 mri_labels['vit_d'].values[0], mri_labels['hba1c'].values[0], mri_labels['bmi'].values[0],
+                 mri_labels['lbp'].values[0]])
     return patient_meta_data
 
 
@@ -385,7 +384,7 @@ def generate_mri_labels(cfg, logger):
 
     # Read the pfirrmann grade labels for patients
     mri_labels = pd.read_csv(cfg.mode.mri_scans.labels)
-    patient_ids = mri_labels.PatientID.values
+    patient_ids = mri_labels.patient_id.values
 
     # patient_id_subset = random.choices(patient_ids, k=1)
     # pdf = pd.DataFrame(data=patient_id_subset, columns=['patient_id'])
@@ -404,11 +403,12 @@ def generate_mri_labels(cfg, logger):
                 # logger.info(mri)
                 mri_count += 1
                 total_count += 1
-                patient_data = categorize_spine_units(cfg, mri_labels[mri_labels['PatientID'] == patient_id], mri,
+                patient_data = categorize_spine_units(cfg, mri_labels[mri_labels['patient_id'] == patient_id], mri,
                                                       logger, spine_units)
                 patient_meta = pd.DataFrame(data=patient_data,
-                                            columns=['patient_id', 'dir_name', 'file_name', 'pfirrmann_grade',
-                                                     'pfirrmann_grade_vv', 'pfirrmann_grade_max'])
+                                            columns=['patient_id', 'dir_name', 'file_name', 'spine_unit',
+                                                     'pfirrmann_grade',
+                                                     'sex', 'vit_d', 'hba1c', 'bmi', 'lbp'])
                 meta_data = pd.concat([patient_meta, meta_data])
                 patient_ids.set_postfix(mri_count=mri_count, total_count=total_count)
         meta_data.to_csv(str(parent_path) + "/patient_meta_data.csv", index=False)

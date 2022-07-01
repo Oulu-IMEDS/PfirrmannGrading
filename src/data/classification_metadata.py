@@ -4,6 +4,8 @@ from pathlib import PurePath, Path
 
 def build_classification_metadata(cfg, logger):
     df = pd.read_csv(PurePath.joinpath(Path(cfg.mode.classification.dir, cfg.mode.classification.metadata)))
+    logger.info(f'Data Frame Size:{df.shape}')
+
     pfirrmann_col = cfg.mode.classification.pfirrmann_column
     cdf = df.groupby(['patient_id', 'dir_name', pfirrmann_col])['file_name'].count().reset_index(
         name='file_count')

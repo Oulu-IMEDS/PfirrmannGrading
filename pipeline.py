@@ -1,5 +1,6 @@
 import cv2
 import gc
+import os
 import hydra
 import imgaug
 import logging
@@ -10,10 +11,14 @@ from omegaconf import DictConfig
 from pathlib import Path, PurePath
 
 from src.data.classification_metadata import build_classification_metadata
+from src.data.multimodal_metadata import build_multimodal_metadata
 from src.data.segmentation_metadata import build_segmentation_metadata
 from src.training.classify import start_classification
+from src.training.multimodal import start_multimodal_classification
 from src.training.segment import start_training
-from src.utils.classification_utils import score_avg_classification, split_train_test
+from src.utils.multimodal_utils import score_avg_multi_modal_score, score_avg_multi_modal_score_tta, split_train_test
+from src.utils.classification_utils import score_avg_classification, score_avg_classification_score_tta, \
+    split_train_test
 from src.utils.segmentation_utils import visualize_segmentation, generate_spine_map, generate_mri_labels, \
     split_test_train, score_avg_segmentation
 
@@ -28,19 +33,18 @@ def create_sub_dir(cfg):
         dir_path.mkdir(parents=True, exist_ok=True)
 
 
-def set_random_seed(cfg):
+def set_random_seed(seed):
     torch.cuda.empty_cache()
     gc.collect()
-    np.random.seed(cfg.random_seed)
-    torch.cuda.manual_seed(cfg.random_seed)
-    torch.manual_seed(cfg.random_seed)
-    imgaug.random.seed(cfg.random_seed)
-    random.seed(cfg.random_seed)
-    cv2.setRNGSeed(cfg.random_seed)
-
-    # torch.use_deterministic_algorithms(True)
-    # torch.backends.cudnn.deterministic=True
-    # torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.manual_seed(seed)
+    imgaug.random.seed(seed)
+    random.seed(seed)
+    cv2.setRNGSeed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
 
 
 def start_segmentation_pipeline(cfg: DictConfig) -> None:
@@ -76,14 +80,34 @@ def start_classification_pipeline(cfg: DictConfig) -> None:
         else:
             logger.warning("Starting the classification pipeline with device: " + cfg.device)
 
-        # Build Segmentation Metadata from Images and Masks directories
+        # Build Classification Metadata from Images and Masks directories
         cdf = build_classification_metadata(cfg, logger)
 
-        # split_train_test method will split into train_df (80%) and 4 tests_dfs
+        # split_train_test method will split into train_df and test dfs
         classification_df, test_df = split_train_test(cfg, cdf)
         start_classification(cfg, classification_df, logger)
 
-        avg_model_score = score_avg_classification(cfg, test_df, logger)
+        # avg_model_score = score_avg_classification(cfg, test_df, logger)
+        avg_model_score = score_avg_classification_score_tta(cfg, test_df, logger)
+        logger.info(f"Model Score:{avg_model_score * 100:.3f}")
+
+
+def start_multimodal_pipeline(cfg: DictConfig) -> None:
+    if cfg.mode.multimodal.run_mode == 'train':
+        if cfg.device == 'cuda':
+            logger.info("Starting the multimodal pipeline with device: " + cfg.device)
+        else:
+            logger.warning("Starting the multimodal pipeline with device: " + cfg.device)
+
+        # Build Classification Metadata from Images and Masks directories
+        cdf = build_multimodal_metadata(cfg, logger)
+
+        # split_train_test method will split into train_df and test dfs
+        multimodal_df, test_df = split_train_test(cfg, cdf)
+        start_multimodal_classification(cfg, multimodal_df, logger)
+
+        # avg_model_score = score_avg_multi_modal_score(cfg, test_df, logger)
+        avg_model_score = score_avg_multi_modal_score_tta(cfg, test_df, logger)
         logger.info(f"Model Score:{avg_model_score * 100:.3f}")
 
 
@@ -91,13 +115,17 @@ def start_classification_pipeline(cfg: DictConfig) -> None:
 def start_pipeline(cfg: DictConfig) -> None:
     pipeline = list(cfg.mode.keys())[0]
     if pipeline == 'segmentation':
-        set_random_seed(cfg)
+        set_random_seed(cfg.random_seed)
         create_sub_dir(cfg)
         start_segmentation_pipeline(cfg)
     elif pipeline == 'classification':
-        set_random_seed(cfg)
+        set_random_seed(cfg.random_seed)
         create_sub_dir(cfg)
         start_classification_pipeline(cfg)
+    elif pipeline == 'multimodal':
+        set_random_seed(cfg.random_seed)
+        create_sub_dir(cfg)
+        start_multimodal_pipeline(cfg)
 
 
 if __name__ == '__main__':
