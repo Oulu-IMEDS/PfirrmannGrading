@@ -1,0 +1,11 @@
+# classification meta data
+multimodal:
+  run_mode: train
+  dir: /data/NFBC/NFBC_Spine_Unit_Classification
+  metadata: patient_meta_data_bin.csv
+  target_column: pfirrmann_grade
+  num_classes: 4
+  num_slices: 4
+  img_width: 224
+  img_height: 224
+  meta_features: bmi,sex
