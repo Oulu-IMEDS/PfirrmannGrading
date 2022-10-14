@@ -1,5 +1,4 @@
 import torch.nn as nn
-import torch.nn.functional as F
 import torch
 
 
@@ -24,9 +23,8 @@ class FocalLoss(nn.Module):
         focal_loss = ((1 - pt) ** self.gamma) * entropy_loss
 
         # if self.alpha >= 0:
-        #     alpha_t = self.alpha * pt + (1 - self.alpha) * (1 - pt)
         #     focal_loss = alpha_t * focal_loss
-
+        # print(focal_loss)
         if self.reduction == "none":
             return focal_loss
         elif self.reduction == "mean":

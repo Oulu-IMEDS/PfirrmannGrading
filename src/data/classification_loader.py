@@ -70,7 +70,7 @@ class ClassificationLoader(Dataset):
         #         random.choices(image_list, weights=weight_vector, k=self.cfg.mode.classification.num_slices))
 
         if self.cfg.mode.classification.num_slices == 1:
-            image_list = image_list[midpoint]
+            image_list = [image_list[midpoint]]
         elif len(image_list) >= self.cfg.mode.classification.num_slices:
             image_list = image_list[midpoint - r:midpoint + r]
         elif len(image_list) < self.cfg.mode.classification.num_slices:
@@ -99,41 +99,83 @@ class ClassificationLoader(Dataset):
     # Apply Image Transformations using Albumentations
     def apply_img_transforms(self, img_raw):
         if self.aug_type == 'train':
-            train_transform = A.Compose(
-                [A.OneOf([A.RandomGamma(),
-                          A.RandomBrightnessContrast(brightness_limit=(-0.3, 0.3), contrast_limit=(-0.2, 0.2)),
-                          A.GridDistortion(num_steps=5, distort_limit=0.3, interpolation=1, border_mode=4,
-                                           value=None, mask_value=None),
-                          A.Downscale(scale_min=0.5, scale_max=0.5, interpolation=0),
-                          ], p=0.6
-                         ),
-                 A.OneOf([A.Affine(rotate=25), A.Affine(rotate=-20), ], p=0.7),
-                 A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
-                 A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
-                 ToTensorV2()])
+            if self.cfg.classification_architecture['_target_'] == 'spinenetv2' or self.cfg.classification_architecture['_target_'] == 'spinenet_miccai':
+                train_transform = A.Compose(
+                    [A.RandomBrightnessContrast(p=0.1),
+                     A.Affine(rotate=(-10, 10), p=0.1),
+                     A.ColorJitter(p=0.1),
+                     A.VerticalFlip(p=0.1),
+                     A.GaussNoise(p=0.5),
+                     A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
+            elif self.cfg.classification_architecture['_target_'] == 'spinenetv1':
+                train_transform = A.Compose(
+                    [A.RandomBrightnessContrast(brightness_limit=0.1,contrast_limit=0.1,p=0.5),
+                     A.Affine(rotate=(-15, 15), p=0.5),
+                     A.RandomScale(scale_limit=(0.9, 1.1), interpolation=1, always_apply=False, p=0.5),
+                     #A.HorizontalFlip(p=0.5),
+                     #A.VerticalFlip(p=0.5),
+                     A.Resize(112, 224),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
+            else:
+                train_transform = A.Compose(
+                    [A.OneOf([A.RandomGamma(),
+                              A.RandomBrightnessContrast(brightness_limit=(-0.3, 0.3), contrast_limit=(-0.2, 0.2)),
+                              A.GridDistortion(num_steps=5, distort_limit=0.3, interpolation=1, border_mode=4,
+                                               value=None, mask_value=None),
+                              A.Downscale(scale_min=0.5, scale_max=0.5, interpolation=0),
+                              ], p=0.6
+                             ),
+                     A.OneOf([A.Affine(rotate=25), A.Affine(rotate=-20), ], p=0.7),
+                     A.GaussNoise(var_limit=(10, 100), mean=0, per_channel=False, p=0.6),
+                     A.Blur(blur_limit=7, always_apply=False, p=0.5),
+                     A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
             transformed = train_transform(image=img_raw)
             transformed_img = transformed['image']
             transformed_img = transformed_img.type(torch.FloatTensor)
             return transformed_img
         elif self.aug_type == 'val':
-            val_transform = A.Compose(
-                [A.OneOf([A.RandomGamma(),
-                          A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.1, 0.1)),
-                          A.Affine(rotate=(-30, 30))
-                          ], p=0.5
-                         ),
-                 A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
-                 A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
-                 ToTensorV2()])
+            if self.cfg.classification_architecture['_target_'] == 'spinenetv2' or self.cfg.classification_architecture['_target_'] == 'spinenet_miccai':
+                val_transform = A.Compose([
+                     A.RandomBrightnessContrast(p=0.1),
+                     A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
+            elif self.cfg.classification_architecture['_target_'] == 'spinenetv1':
+                val_transform = A.Compose([
+                     A.RandomBrightnessContrast(p=0.5),
+                     A.Resize(112, 224),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
+            else:
+                val_transform = A.Compose(
+                    [A.OneOf([A.RandomGamma(),
+                              A.RandomBrightnessContrast(brightness_limit=(-0.2, 0.2), contrast_limit=(-0.1, 0.1)),
+                              A.Affine(rotate=(-30, 30))
+                              ], p=0.5
+                             ),
+                     A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
             transformed = val_transform(image=img_raw)
             transformed_img = transformed['image']
             transformed_img = transformed_img.type(torch.FloatTensor)
             return transformed_img
         else:
-            test_transform = A.Compose(
-                [A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
-                 A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
-                 ToTensorV2()])
+            if self.cfg.classification_architecture['_target_'] == 'spinenetv1':
+                test_transform = A.Compose(
+                    [A.Resize(112, 224),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
+            else:
+                test_transform = A.Compose(
+                    [A.Resize(self.cfg.mode.classification.img_width, self.cfg.mode.classification.img_height),
+                     A.Normalize(mean=0.235, std=0.134, always_apply=True, p=1.0),
+                     ToTensorV2()])
             transformed = test_transform(image=img_raw)
             transformed_img = transformed['image']
             # Tensors are to be converted to float tensors as cv2 is giving byte tensor

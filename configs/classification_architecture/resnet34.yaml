@@ -1,2 +1,2 @@
 _target_: torchvision.models.resnet34
-pretrained: True
+weights: ResNet34_Weights.DEFAULT

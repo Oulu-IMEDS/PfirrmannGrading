@@ -1,5 +1,5 @@
 learning_rate: 1e-3
-epochs: 50
+epochs: 75
 
 optimizer:
   weight_decay: 1e-4
@@ -8,17 +8,19 @@ optimizer:
 # step: Use StepLR Scheduler
 scheduler:
   type: step
-  step: 20
+  step: 15
   gamma: 0.1
 
 # CE : Cross Entropy Loss
 # WCE: Weighted Cross Entropy Loss
 # FL: Focal Loss with Cross Entropy
 # FLWCE: Focal Loss with Weighted Cross Entropy
+# CB: Class Balanced Loss
 loss_function: FL
 label_smoothing: 0.2
 
 #Test Time Augmentations
+use_tta: Y
 tta: 5
 
 #weighted: Weighted Samplers
@@ -27,17 +29,17 @@ sampler: weighted
 
 #sequential: take first n slices
 #weighted: take center weighting
-slice_weight: sequential
+slice_weight: weighted
 
 dataloader:
-  batch_size: 16
-  num_workers: 1
+  batch_size: 20
+  num_workers: 0
 
 testing:
   batch_size: 100
 
 checkpoint:
-  epochs_to_pass: 15
+  epochs_to_pass: 10
 
 train_test:
   test_perc: 0.2

@@ -105,8 +105,6 @@ def start_training(cfg, segmentation_df, logger):
 
     logger.info(f"Starting Training with Train DF Shape:{train_df.shape} Val DF Shape:{val_df.shape}")
 
-    return
-
     # Create segmentation dataset with Augmentations
     train_ds = SegmentationLoader(cfg, train_df, 'train')
     val_ds = SegmentationLoader(cfg, val_df, 'val')
@@ -118,7 +116,7 @@ def start_training(cfg, segmentation_df, logger):
                             num_workers=cfg.training.dataloader.num_workers)
 
     # Visualize random image and mask
-    visualize_random_img_masks(train_loader, writer, logger)
+    # visualize_random_img_masks(cfg,train_loader, writer, logger)
 
     prev_iou = 0
     for epoch in range(cfg.training.epochs):

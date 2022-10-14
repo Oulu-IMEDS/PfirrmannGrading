@@ -1,5 +1,5 @@
 _target_: segmentation_models_pytorch.Unet
-encoder_name: efficientnet-b3
+encoder_name: efficientnet-b0
 encoder_weights: "imagenet"
-in_channels: 3
+in_channels: 1
 classes: 14

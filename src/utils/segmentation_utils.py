@@ -115,11 +115,11 @@ def calculate_iou(confusion_matrix):
     return ious
 
 
-def visualize_random_img_masks(image_batch, writer, logger):
+def visualize_random_img_masks(cfg, image_batch, writer, logger):
     plt.figure(figsize=(20, 20))
     idx, imgs = next(enumerate(image_batch))
     plot_ind = 1
-    for index in range(8):
+    for index in range(cfg.training.dataloader.batch_size):
         image_1 = imgs['transformed_raw'][index].unsqueeze(0)
         mask = imgs['transformed_mask'][index].unsqueeze(0)
 
@@ -155,6 +155,10 @@ def img_to_tensor(cfg, img_raw, tensor=False):
 
 
 def get_spine_unit_rect(cfg, input_image, model_prediction, spine_unit, logger, pad=None, display=False):
+    if (input_image.shape[0], input_image.shape[1]) != (512, 512):
+        resized_input=cv2.resize(input_image,(512, 512),interpolation=cv2.INTER_CUBIC)
+    else:
+        resized_input = input_image
     if spine_unit == 'l1-l2':
         s_unit = (np.uint8(model_prediction == cfg.mode.spine_segments.l1) + np.uint8(
             model_prediction == cfg.mode.spine_segments.d1) + np.uint8(
@@ -172,9 +176,9 @@ def get_spine_unit_rect(cfg, input_image, model_prediction, spine_unit, logger, 
             model_prediction == cfg.mode.spine_segments.d4) + np.uint8(
             model_prediction == cfg.mode.spine_segments.l5)) * 255
     elif spine_unit == 'l5-s1':
-        s_unit = (np.uint8(model_prediction == cfg.mode.spine_segments.s1) + np.uint8(
+        s_unit = (np.uint8(model_prediction == cfg.mode.spine_segments.l5) + np.uint8(
             model_prediction == cfg.mode.spine_segments.d5) + np.uint8(
-            model_prediction == cfg.mode.spine_segments.l5)) * 255
+            model_prediction == cfg.mode.spine_segments.s1)) * 255
     elif spine_unit == 'd1':
         s_unit = np.uint8(model_prediction == cfg.mode.spine_segments.d1) * 255
     elif spine_unit == 'd2':
@@ -210,8 +214,7 @@ def get_spine_unit_rect(cfg, input_image, model_prediction, spine_unit, logger, 
             return 0
         else:
             x, y, width, height = cv2.boundingRect(big_contour)
-            result = input_image[y:y + height, x:x + width]
-
+            result = resized_input[y:y + height, x:x + width]
             dw = cfg.mode.spine_segments.crop_to_width - result.shape[0]
             dh = cfg.mode.spine_segments.crop_to_height - result.shape[1]
 
@@ -223,15 +226,20 @@ def get_spine_unit_rect(cfg, input_image, model_prediction, spine_unit, logger, 
                 right = max(0, dh - left)
                 result = cv2.copyMakeBorder(result, top, bottom, left, right,
                                             cv2.BORDER_CONSTANT, value=(255, 255, 255))
-
             # If resultant crop has dimensions more than intended crop dimensions, apply resize
             if (result.shape[0], result.shape[1]) != (
                     cfg.mode.spine_segments.crop_to_width, cfg.mode.spine_segments.crop_to_height):
-                result = cv2.resize(result,
-                                    (cfg.mode.spine_segments.crop_to_width, cfg.mode.spine_segments.crop_to_height),
-                                    interpolation=cv2.INTER_AREA)
+                if (result.shape[0] < cfg.mode.spine_segments.crop_to_width or result.shape[
+                    1] < cfg.mode.spine_segments.crop_to_width):
+                    result = cv2.resize(result,
+                                        (cfg.mode.spine_segments.crop_to_width, cfg.mode.spine_segments.crop_to_height),
+                                        interpolation=cv2.INTER_CUBIC)
+                else:
+                    result = cv2.resize(result,
+                                        (cfg.mode.spine_segments.crop_to_width, cfg.mode.spine_segments.crop_to_height),
+                                        interpolation=cv2.INTER_AREA)
         if display:
-            plt.imshow(result)
+            plt.imshow(result, cmap='gray')
             plt.show()
             plt.close()
         else:
@@ -243,9 +251,17 @@ def model_prediction(cfg, input):
     # checkpoints = list(Path(PurePath.joinpath(Path.cwd(), "results", "models")).glob("SpineSeg*"))
     checkpoints = list(Path(parent).glob("SpineSeg*"))
     img_raw = cv2.imread(input)
-    img_torch = img_to_tensor(cfg, img_raw, tensor=True)
-    img_raw = img_to_tensor(cfg, img_raw)
-    img_torch = img_torch.unsqueeze(0).float().to('cuda')
+    img_raw = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
+    input_img = img_raw.copy()
+    transform = A.Compose(
+        [A.Normalize(mean=0.181, std=0.184, always_apply=True, p=1.0),
+         A.Resize(512, 512),
+         ToTensorV2()])
+    img_raw = transform(image=img_raw)['image']
+    img_torch = img_raw.unsqueeze(0).float().to('cuda')
+    # img_torch = img_to_tensor(cfg, img_raw, tensor=True)
+    # img_raw = img_to_tensor(cfg, img_raw)
+    # img_torch = img_torch.unsqueeze(0).float().to('cuda')
 
     prediction = 0
     for checkpoint in checkpoints:
@@ -261,47 +277,47 @@ def model_prediction(cfg, input):
     prediction /= len(checkpoints)
     prediction = prediction.squeeze().argmax(0).to('cpu').numpy()
 
-    return img_raw, prediction
+    return input_img, prediction
 
 
 def visualize_segmentation(cfg, input, logger):
     original_image, prediction = model_prediction(cfg, input)
-
+    original_image = original_image.squeeze(0)
     plt.figure(figsize=(30, 10))
     plt.subplot(141)
-    plt.imshow(original_image)
+    plt.imshow(original_image, cmap='gray')
     plt.xticks([])
     plt.yticks([])
 
     plt.subplot(142)
-    plt.imshow(prediction)
+    plt.imshow(prediction, cmap='gray')
     plt.xticks([])
     plt.yticks([])
 
     plt.subplot(143)
-    img_contours = original_image.copy()
+    img_contours = original_image.detach().numpy()
     for cls_id in range(1, cfg.mode.input.n_classes):
         cur_mask = np.uint8(prediction == cls_id) * 255
         if cur_mask.sum() == 0:
             continue
         contours, hierarchy = cv2.findContours(cur_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         if cls_id % 2:
-            cv2.drawContours(img_contours, contours, -1, (0, 255, 0), 3)
-    plt.imshow(img_contours)
+            cv2.drawContours(img_contours, contours, -1, (255, 0, 0), 1)
+    plt.imshow(img_contours, cmap='gray')
     plt.xticks([])
     plt.yticks([])
 
     plt.subplot(144)
-    img_contours = original_image.copy()
-    for cls_id in range(1, 14):
+    img_contours = original_image.detach().numpy()
+    for cls_id in range(1, cfg.mode.input.n_classes):
         cur_mask = np.uint8(prediction == cls_id) * 255
         if cur_mask.sum() == 0:
             continue
         contours, hierarchy = cv2.findContours(cur_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         if cls_id % 2 == 0:
-            cv2.drawContours(img_contours, contours, -1, (255, 0, 0), 3)
+            cv2.drawContours(img_contours, contours, -1, (255, 0, 0), 1)
 
-    plt.imshow(img_contours)
+    plt.imshow(img_contours, cmap='gray')
     plt.xticks([])
     plt.yticks([])
     plt.show()
@@ -316,9 +332,10 @@ def generate_spine_map(cfg, logger):
     for img_file in tqdm(list(PurePath.joinpath(Path(cfg.mode.test.dir)).glob("*.png")), ncols=50,
                          desc="Generating Predictions"):
         input_raw, prediction = model_prediction(cfg, str(img_file))
+        input_raw = input_raw.detach().numpy().squeeze(0)
         plt.figure(figsize=(10, 8))
         plt.subplot(1, 2, 1)
-        plt.imshow(input_raw)
+        plt.imshow(input_raw, cmap='gray')
         vb_units = np.uint8(prediction == cfg.mode.spine_segments.s1) + np.uint8(
             prediction == cfg.mode.spine_segments.l5) + np.uint8(prediction == cfg.mode.spine_segments.l4) + np.uint8(
             prediction == cfg.mode.spine_segments.l3) + np.uint8(prediction == cfg.mode.spine_segments.l2) + np.uint8(
@@ -328,11 +345,11 @@ def generate_spine_map(cfg, logger):
             prediction == cfg.mode.spine_segments.d2) + np.uint8(prediction == cfg.mode.spine_segments.d1) + np.uint8(
             prediction == cfg.mode.spine_segments.d12) * 255
         contours, hierarchy = cv2.findContours(vb_units, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(input_raw, contours, -1, (0, 255, 0), 3)
+        cv2.drawContours(input_raw, contours, -1, (255, 0, 0), 3)
         contours, hierarchy = cv2.findContours(disc_units, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(input_raw, contours, -1, (0, 0, 255), 3)
+        cv2.drawContours(input_raw, contours, -1, (255, 0, 0), 3)
         plt.subplot(1, 2, 2)
-        plt.imshow(input_raw)
+        plt.imshow(input_raw, cmap='gray')
         plt.savefig(cfg.mode.test.dir + "/" + img_file.name + "_pred.png")
         plt.close()
 
@@ -391,6 +408,7 @@ def generate_mri_labels(cfg, logger):
     # pdf.to_csv(str(parent_path) + "/patient_id_subset.csv")
 
     # Path where the MRI images for the corresponding labels are present
+    # patient_ids=['010166+2906']
     mri_path = cfg.mode.mri_scans.dir
     total_count = 0
     meta_data = pd.DataFrame()
@@ -399,7 +417,7 @@ def generate_mri_labels(cfg, logger):
             patient_ids.set_description(f"Processing Patient ID: {patient_id}")
             wildcard = "IMG" + patient_id.replace("+", "_") + "*"
             mri_count = 0
-            for mri in list(PurePath.joinpath(Path(mri_path)).glob(wildcard)):
+            for mri in sorted(list(PurePath.joinpath(Path(mri_path)).glob(wildcard))):
                 # logger.info(mri)
                 mri_count += 1
                 total_count += 1
@@ -411,4 +429,6 @@ def generate_mri_labels(cfg, logger):
                                                      'sex', 'vit_d', 'hba1c', 'bmi', 'lbp'])
                 meta_data = pd.concat([patient_meta, meta_data])
                 patient_ids.set_postfix(mri_count=mri_count, total_count=total_count)
+                if mri_count > 13:  # Removing duplicate scans
+                    break
         meta_data.to_csv(str(parent_path) + "/patient_meta_data.csv", index=False)

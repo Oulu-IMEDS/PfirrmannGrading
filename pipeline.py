@@ -1,14 +1,15 @@
-import cv2
 import gc
+import logging
 import os
+import random
+from pathlib import Path, PurePath
+
+import cv2
 import hydra
 import imgaug
-import logging
 import numpy as np
-import random
 import torch
 from omegaconf import DictConfig
-from pathlib import Path, PurePath
 
 from src.data.classification_metadata import build_classification_metadata
 from src.data.multimodal_metadata import build_multimodal_metadata
@@ -16,9 +17,9 @@ from src.data.segmentation_metadata import build_segmentation_metadata
 from src.training.classify import start_classification
 from src.training.multimodal import start_multimodal_classification
 from src.training.segment import start_training
-from src.utils.multimodal_utils import score_avg_multi_modal_score, score_avg_multi_modal_score_tta, split_train_test
-from src.utils.classification_utils import score_avg_classification, score_avg_classification_score_tta, \
+from src.utils.classification_utils import score_avg_classification, score_avg_classification_tta, \
     split_train_test
+from src.utils.multimodal_utils import score_avg_multi_modal_score_tta, split_train_test
 from src.utils.segmentation_utils import visualize_segmentation, generate_spine_map, generate_mri_labels, \
     split_test_train, score_avg_segmentation
 
@@ -88,7 +89,15 @@ def start_classification_pipeline(cfg: DictConfig) -> None:
         start_classification(cfg, classification_df, logger)
 
         # avg_model_score = score_avg_classification(cfg, test_df, logger)
-        avg_model_score = score_avg_classification_score_tta(cfg, test_df, logger)
+        if cfg.classification_architecture['_target_'] == 'spinenetv2' or cfg.classification_architecture[
+            '_target_'] == 'spinenet_miccai':
+            avg_model_score = score_avg_classification(cfg, test_df, logger)
+        else:
+            if cfg.training.use_tta == 'Y':
+                logger.info("Using TTA to calculate Test Score")
+                avg_model_score = score_avg_classification_tta(cfg, test_df, logger)
+            else:
+                avg_model_score = score_avg_classification(cfg, test_df, logger)
         logger.info(f"Model Score:{avg_model_score * 100:.3f}")
 
 
@@ -111,7 +120,7 @@ def start_multimodal_pipeline(cfg: DictConfig) -> None:
         logger.info(f"Model Score:{avg_model_score * 100:.3f}")
 
 
-@hydra.main(config_path="configs", config_name="configs")
+@hydra.main(version_base=None, config_path="configs", config_name="configs")
 def start_pipeline(cfg: DictConfig) -> None:
     pipeline = list(cfg.mode.keys())[0]
     if pipeline == 'segmentation':
@@ -130,6 +139,6 @@ def start_pipeline(cfg: DictConfig) -> None:
 
 if __name__ == '__main__':
     start_pipeline()
-    # model = SpineNet()
-    # output = model(torch.randn(1, 9, 112, 224))
+    # model = GradingModel()
+    # output = model(torch.randn(1, 1, 4, 128, 128))
     # print(output.shape)

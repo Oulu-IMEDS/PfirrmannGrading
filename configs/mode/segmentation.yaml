@@ -17,7 +17,7 @@ input:
 
 # Test folder where MRI images for segmentation are stored
 test:
-  dir: /data/TUK/TUK_Segmentation_Test
+  dir: /data/NFBC/NFBC_Segmentation_Test
 
 # for creating spine units from MRIs and categorize them to pfirrmann grades
 mri_scans:
@@ -44,6 +44,6 @@ spine_segments:
   l5: 3
   d5: 2
   s1: 1
-  crop_to_height: 128
-  crop_to_width: 128
+  crop_to_height: 224
+  crop_to_width: 224
 

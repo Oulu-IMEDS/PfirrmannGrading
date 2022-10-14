@@ -98,7 +98,10 @@ def save_cm_kfold(cfg, fold, y_true, y_pred, tta, logger):
     classes = ['2', '3', '4', '5']
     df_cm = pd.DataFrame(cm, classes, classes)
     fig = plt.figure(figsize=(9, 6))
-    sns.heatmap(df_cm, annot=True, fmt="d", cmap='Blues')
+    cmn = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    #sns.heatmap(cmn, annot=True, fmt="d", cmap='Blues')
+    sns.heatmap(cmn, annot=True, fmt='.2f', xticklabels=classes, yticklabels=classes, cmap='Blues',
+                annot_kws={"fontsize": 15})
     accuracy = accuracy_score(y_true, y_pred)
     balanced_accuracy = balanced_accuracy_score(y_true, y_pred)
     cohen_kappa = cohen_kappa_score(y_true, y_pred)
@@ -157,8 +160,7 @@ def score_avg_classification(cfg, test_df, logger):
                              num_workers=cfg.training.dataloader.num_workers)
 
     checkpoints = list(Path(PurePath.joinpath(Path.cwd(), "results", "models")).glob("SpineCls_*"))
-    # checkpoints = list(Path("/home/nash/PycharmProjects/PfirrmannGrading/outputs/2022-05-31/11-35-54/results/models
-    # ").glob("SpineCls_*"))
+    # checkpoints = list(Path("/home/nash/PycharmProjects/PfirrmannGrading/outputs/2022-07-27/15-09-43/results/models").glob("SpineCls_*"))
 
     total = 0
     correct_preds = 0
@@ -182,7 +184,10 @@ def score_avg_classification(cfg, test_df, logger):
                 y_pred = []
                 dirs = []
                 for i_batch, batch in enumerate(test_loader):
-                    images = batch['images'].to(cfg.device)
+                    if cfg.classification_architecture['_target_'] == 'spinenetv2':
+                        images = batch['images'].to(cfg.device).unsqueeze(1)
+                    else:
+                        images = batch['images'].to(cfg.device)
                     labels = batch['labels'].to(cfg.device)
                     dir_names = batch['dir_name']
 
@@ -203,13 +208,13 @@ def score_avg_classification(cfg, test_df, logger):
 
                     tepoch.set_postfix(test_acc=test_acc)
                 avg_accuracy.append(balanced_accuracy_score(np.concatenate(y_true), np.concatenate(y_pred)))
-            save_cm_kfold(cfg, f"Test Set", y_true, y_pred, logger)
+            save_cm_kfold(cfg, f"Test Set", y_true, y_pred,False,logger)
             save_mis_classifications(cfg, np.concatenate(dirs), np.concatenate(y_true), np.concatenate(y_pred))
             avg_model_score = np.mean(avg_accuracy)
     return avg_model_score
 
 
-def score_avg_classification_score_tta(cfg, test_df, logger):
+def score_avg_classification_tta(cfg, test_df, logger):
     logger.info(f"Test Set:{test_df.shape}")
     test_ds = ClassificationLoader(cfg, test_df, 'train')
     test_loader = DataLoader(dataset=test_ds, batch_size=cfg.training.testing.batch_size,
@@ -245,7 +250,10 @@ def score_avg_classification_score_tta(cfg, test_df, logger):
                     preds = None
                     with torch.no_grad():
                         for i_batch, batch in enumerate(test_loader):
-                            images = batch['images'].to(cfg.device)
+                            if cfg.classification_architecture['_target_'] == 'spinenetv2':
+                                images = batch['images'].to(cfg.device).unsqueeze(1)
+                            else:
+                                images = batch['images'].to(cfg.device)
                             labels = batch['labels'].to(cfg.device)
                             dir_names = batch['dir_name']
 
